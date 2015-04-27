@@ -40,6 +40,7 @@ module Web.DumpTruck.Route
 )
 where
 
+import Web.DumpTruck.Capture
 import Web.DumpTruck.EndPoint
 
 import Data.ByteString.Lazy (ByteString)
@@ -58,8 +59,7 @@ import qualified Network.HTTP.Types as H
 
 data RouteF a = Route Text a a
               | RouteEnd a a
-              | Capture (Text -> a) a
-              | CaptureInt (Int -> a) a
+              | Capture (Text -> Maybe a) a
               | Terminal Method (EndPoint IO RespBuilder) a
               | TerminalAny (EndPoint IO RespBuilder)
               | RemainingPath ([Text] -> a)
@@ -68,8 +68,7 @@ data RouteF a = Route Text a a
 instance Functor RouteF where
     fmap f (Route t c n) = Route t (f c) (f n)
     fmap f (RouteEnd c n) = RouteEnd (f c) (f n)
-    fmap f (Capture g n) = Capture (f . g) (f n)
-    fmap f (CaptureInt g n) = CaptureInt (f . g) (f n)
+    fmap f (Capture g n) = Capture (fmap f . g) (f n)
     fmap f (Terminal m r n) = Terminal m r (f n)
     fmap f (TerminalAny r) = TerminalAny r
     fmap f (RemainingPath g) = RemainingPath (f . g)
@@ -103,27 +102,36 @@ routeEnd :: Route () -- ^ The route to take if matching succeeds.
          -> Route ()
 routeEnd d = wrap $ RouteEnd d (return ())
 
--- | Matches any path segment text so long as there is a path segment to match
--- against. If matching succeeds the path segment is consumed and passed to the
--- given function as an argument to produce the route to continue on. Otherwise,
--- matching will fall through to the next 'Route'.
-capture :: (Text -> Route ()) -- ^ The function called when there is a path
-                              -- segment to capture, feeding it to the
-                              -- function to produce the route to take.
+-- | Matches any path segment that can be parsed into a 'Captureable' type. If
+-- parsing succeeds the path segment is consumed and passed to the given
+-- function as the parsed value to produce the 'Route' to continue on.
+-- Otherwise matching falls through to the next 'Route'.
+--
+-- Note: Since this function is polymorphic in the argument but not the result,
+-- it may be necessary to include a type annotation in the given function to
+-- force its argument type to be monomorphic.
+capture :: Captureable a
+        => (a -> Route ()) -- ^ The function called when there is a path segment
+                           -- and it can be parsed into the appropriate type.
+                           -- The parsed value will be fed into this function to
+                           -- produce the next 'Route' to take.
         -> Route ()
-capture f = wrap $ Capture ((>> liftF (BackTrack ())) . f) (return ())
+capture f = wrap $ Capture
+    (fmap ((>> liftF (BackTrack ())) . f) . performCapture)
+    (return ())
 
--- | Matches any path segment text that can be parsed into an 'Int'. If matching
--- succeeds the path segment is consumed and passed to the given function as an
--- 'Int' value to produce the 'Route' to continue on. Otherwise, matching will
--- fall through to the next 'Route'.
-captureInt :: (Int -> Route ()) -- ^ The function called when there is a
-                                -- path segment and it can be parsed as an
-                                -- 'Int'. The parsed value will be fed into
-                                -- this function to produce the route to
-                                -- take.
-           -> Route()
-captureInt f = wrap $ CaptureInt ((>> liftF (BackTrack ())) . f) (return ())
+-- | Matches any path segment that can be parsed into an 'Int'. If parsing
+-- succeeds the path segment is consumed and passed to the given function as the
+-- parsed value to produce the 'Route' to continue on. Otherwise matching falls
+-- through to the next 'Route'.
+--
+-- Note: This function is just a monomorphic version of 'capture'.
+captureInt :: (Int -> Route ()) -- ^ The function called when there is a path
+                                -- segment and it can be parsed into an 'Int'.
+                                -- The parsed value will be fed into this
+                                -- function to produce the route to take.
+           -> Route ()
+captureInt = capture
 
 -- | Matches if the request method is @GET@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
@@ -211,12 +219,10 @@ mkDumpTruckApp d req c = go [] p (fromF d)
     go' back [] (RouteEnd c n) = go back [] c
     go' back path (RouteEnd c n) = go back path n
     go' back [] (Capture f n) = go back [] n
-    go' back (x:xs) (Capture f n) = go (x:back) xs (f x)
-    go' back [] (CaptureInt f n) = go back [] n
-    go' back path@(x:xs) (CaptureInt f n) =
-        case decimal x of
-            Left _ -> go back path n
-            Right (i,_) -> go (x:back) xs (f i)
+    go' back path@(x:xs) (Capture f n) =
+        case f x of
+            Nothing -> go back path n
+            Just r -> go (x:back) xs r
     go' back path (Terminal m r n) =
         if m == method
         then cont r

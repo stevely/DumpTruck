@@ -128,7 +128,7 @@
 -- myApp :: Route ()
 -- myApp = do
 --     route "foo\/bar" . routeEnd $ matchAny (raw "Matched exactly \/foo\/bar")
---     route "foo\/bar\/foobar" $ matchAny (raw "Maybed \/foo\/bar\/foobar")
+--     route "foo\/bar\/foobar" $ matchAny (raw "Matched \/foo\/bar\/foobar")
 --     route "foo\/baz" $ matchAny (raw "Matched at least \/foo\/baz")
 --     route "quux" $ matchAny (raw "Matched \/quux")
 -- @
@@ -137,18 +137,24 @@
 -- attempt at merging branches, so this example will backtrack more than the one
 -- preceding it.)
 --
--- It is possible to also capture path segments, either as raw 'Text' or as an
--- 'Int'. Matching will fail if the segment doesn't exist or, in the case of
--- capturing 'Int's, parsing fails.
+-- It is also possible to capture path segments as any type that is
+-- 'Captureable'. Instances of this type class have a corresponding parser used
+-- when attempting to capture. A number of common instances are provided, and
+-- users can also write instances of 'Captureable' for their own data types and
+-- use 'capture' with them normally. Matching will fail if the segment doesn't
+-- exist or if parsing fails.
+--
+-- In addition to 'capture', there is 'captureInt' which is 'capture'
+-- specialized to 'Int'. This can be useful as the polymorphic 'capture' can
+-- cause type errors due to ambiguous types.
 --
 -- @
--- import qualified Data.Text.Encoding as T
 -- import qualified Data.ByteString.Lazy as LBS
 --
 -- myApp :: Route ()
 -- myApp = do
 --     route "text" $ capture $ \t ->
---         matchAny (raw $ "Captured: " LBS.++ (LBS.fromStrict $ T.encodeUtf8 t))
+--         matchAny (raw $ "Captured: " LBS.++ t)
 --     route "int" $ captureInt $ \i ->
 --         if i > 3
 --         then matchAny (raw "Greater than 3!")

@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                dumptruck
-version:             0.1.0.0
+version:             0.1.1.0
 synopsis:            Micro web framework built on top of WAI
 description:         DumpTruck is a micro web framework built on top of WAI.
                      It features a simple monadic interface for building up
@@ -20,6 +20,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Web.DumpTruck
                      , Web.DumpTruck.Cookie
+                     , Web.DumpTruck.Capture
                      , Web.DumpTruck.Date
                      , Web.DumpTruck.EndPoint
                      , Web.DumpTruck.Form
