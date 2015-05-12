@@ -28,6 +28,8 @@ module Web.DumpTruck.EndPoint
 , redirect
 , redirectPermanent
 , methodNotAllowed
+, withFormData
+, withJson
 )
 where
 
@@ -82,7 +84,7 @@ instance MonadIO m => MonadIO (EndPoint m) where
 combineStates :: ((a -> b), Maybe Status, [Header] -> [Header])
               -> (a, Maybe Status, [Header] -> [Header])
               -> (b, Maybe Status, [Header] -> [Header])
-combineStates (f, s1, hs1) (a, s2, hs2) = (f a, s1 <|> s2, hs1 . hs2)
+combineStates (f, s1, hs1) (a, s2, hs2) = (f a, s2 <|> s1, hs1 . hs2)
 
 getRequest :: Monad m => EndPoint m Request
 getRequest = EndPoint $ \r -> return (r, Nothing, id)
@@ -245,6 +247,24 @@ methodNotAllowed = return r
   where
     r _ hs = responseLBS methodNotAllowed405 hs "Method not allowed"
 
+-- | Will attempt to parse the request body as URL-encoded form data and- if
+-- successful- will then feed that form data to the given function to produce an
+-- 'EndPoint'. If parsing fails, it will return @400 Bad Request@.
+withFormData :: ([(B.ByteString, B.ByteString)] -> EndPoint IO RespBuilder)
+             -> EndPoint IO RespBuilder
+withFormData f = do
+    req <- getRequest
+    maybeForm <- liftIO (parseFormData req)
+    case maybeForm of
+        Nothing -> return badRequest
+        Just a  -> f a
+  where
+    badRequest _ hs = responseLBS badRequest400 hs "Invalid request body"
+
+-- | Will attempt to parse the request body as JSON and- if successful- will
+-- then feed that JSON data converted into the appropriate type to the given
+-- function to produce an 'EndPoint'. If parsing fails, it will return @400 Bad
+-- Request@.
 withJson :: FromJSON a => (a -> EndPoint IO RespBuilder) -> EndPoint IO RespBuilder
 withJson f = do
     req <- getRequest

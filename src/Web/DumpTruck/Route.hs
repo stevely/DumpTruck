@@ -32,6 +32,9 @@ module Web.DumpTruck.Route
 , post
 , put
 , delete
+, options
+, patch
+, method
 , matchAny
 , remainingPath
 , directory
@@ -44,12 +47,10 @@ import Web.DumpTruck.Capture
 import Web.DumpTruck.EndPoint
 
 import Data.ByteString.Lazy (ByteString)
-import Data.List (intersperse)
+import Data.List (intersperse, stripPrefix)
 import Data.Text (Text)
-import Data.Text.Read (decimal)
+import Control.Applicative
 import Control.Monad
-import Control.Monad.Free
-import Control.Monad.Free.Church
 import Network.Wai
 import Network.HTTP.Types
 
@@ -57,28 +58,36 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Network.HTTP.Types as H
 
-data RouteF a = Route Text a a
-              | RouteEnd a a
-              | Capture (Text -> Maybe a) a
-              | Terminal Method (EndPoint IO RespBuilder) a
-              | TerminalAny (EndPoint IO RespBuilder)
-              | RemainingPath ([Text] -> a)
-              | BackTrack a
-
-instance Functor RouteF where
-    fmap f (Route t c n) = Route t (f c) (f n)
-    fmap f (RouteEnd c n) = RouteEnd (f c) (f n)
-    fmap f (Capture g n) = Capture (fmap f . g) (f n)
-    fmap f (Terminal m r n) = Terminal m r (f n)
-    fmap f (TerminalAny r) = TerminalAny r
-    fmap f (RemainingPath g) = RemainingPath (f . g)
-    fmap f (BackTrack n) = BackTrack (f n)
-
 -- | The 'Route' web routing tree data type. A DumpTruck web application is a
 -- 'Route' routing tree with some number of 'EndPoint' leaves that produce a
 -- 'Response'. 'Route' is a 'Monad', and @do@ notation is the prefered means of
 -- building up 'Route' values.
-type Route = F RouteF
+newtype Route a = Route {
+    runRoute :: [Text] -> Method -> Either (EndPoint IO RespBuilder) a
+}
+
+instance Functor Route where
+    fmap f (Route r) = Route go
+      where
+        go ts m = fmap f (r ts m)
+
+instance Applicative Route where
+    pure x = Route go
+      where
+        go _ _ = Right x
+    (Route f) <*> (Route r) = Route go
+      where
+        go ts m = let f' = f ts m
+                      r' = r ts m
+                   in f' <*> r'
+
+instance Monad Route where
+    return = pure
+    (Route f) >>= k = Route go
+      where
+        go ts m = case f ts m of
+            Left e -> Left e
+            Right a -> (runRoute (k a)) ts m
 
 -------------------------------------------------------------------------------
 -- Route Smart Constructors
@@ -92,15 +101,21 @@ route :: Text -- ^ The path segment to match on. Multiple path segments can be
               -- Leading and trailing "@\/@" characters are ignored.
       -> Route () -- ^ The route to take if matching succeeds.
       -> Route ()
-route t d = foldr route' d $ filter (/= "") (T.splitOn "/" t)
+route t (Route r) = Route go
   where
-    route' t d = wrap $ Route t (d >> liftF (BackTrack ())) (return ())
+    go [] _ = return ()
+    go ps m = case stripPrefix (filter (/= "") (T.splitOn "/" t)) ps of
+        Nothing -> return ()
+        Just xs -> r xs m
 
 -- | Will only match if there are no more path segments to consider. Otherwise,
 -- matching will fall through to the next 'Route'.
 routeEnd :: Route () -- ^ The route to take if matching succeeds.
          -> Route ()
-routeEnd d = wrap $ RouteEnd d (return ())
+routeEnd (Route r) = Route go
+  where
+    go [] m = r [] m
+    go _ _ = return ()
 
 -- | Matches any path segment that can be parsed into a 'Captureable' type. If
 -- parsing succeeds the path segment is consumed and passed to the given
@@ -116,9 +131,12 @@ capture :: Captureable a
                            -- The parsed value will be fed into this function to
                            -- produce the next 'Route' to take.
         -> Route ()
-capture f = wrap $ Capture
-    (fmap ((>> liftF (BackTrack ())) . f) . performCapture)
-    (return ())
+capture f = Route go
+  where
+    go [] _ = return ()
+    go (x:xs) m = case performCapture x of
+        Nothing -> return ()
+        Just a  -> (runRoute (f a)) xs m
 
 -- | Matches any path segment that can be parsed into an 'Int'. If parsing
 -- succeeds the path segment is consumed and passed to the given function as the
@@ -137,42 +155,62 @@ captureInt = capture
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
 get :: EndPoint IO RespBuilder -> Route ()
-get r = liftF $ Terminal methodGet r ()
+get = method methodGet
 
 -- | Matches if the request method is @POST@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
 post :: EndPoint IO RespBuilder -> Route ()
-post r = liftF $ Terminal methodPost r ()
+post = method methodPost
 
 -- | Matches if the request method is @PUT@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
 put :: EndPoint IO RespBuilder -> Route ()
-put r = liftF $ Terminal methodPut r ()
+put = method methodPut
 
 -- | Matches if the request method is @DELETE@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
 delete :: EndPoint IO RespBuilder -> Route ()
-delete r = liftF $ Terminal methodDelete r ()
+delete = method methodDelete
+
+-- | Matches if the request method is @OPTIONS@. This is a terminal node. If
+-- matching succeeds, the 'EndPoint' will be executed to generate the final
+-- 'Response' and matching will end.
+options :: EndPoint IO RespBuilder -> Route ()
+options = method methodOptions
+
+-- | Matches if the request method is @PATCH@. This is a terminal node. If
+-- matching succeeds, the 'EndPoint' will be executed to generate the final
+-- 'Response' and matching will end.
+patch :: EndPoint IO RespBuilder -> Route ()
+patch = method methodPatch
 
 -- | Matches if the request method is the one provided. This is a terminal node.
 -- If matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
 method :: Method -> EndPoint IO RespBuilder -> Route ()
-method m r = liftF $ Terminal m r ()
+method m e = Route go
+  where
+    go _ m'
+        | m == m'   = Left e
+        | otherwise = return ()
 
 -- | Matching will always succeed. This is a terminal node. The 'EndPoint'
 -- will always be executed to generate the final 'Response' and matching will
 -- end.
 matchAny :: EndPoint IO RespBuilder -> Route ()
-matchAny = liftF . TerminalAny
+matchAny e = Route go
+  where
+    go _ _ = Left e
 
 -- | Produces the remaining path to match against as a list of 'Text' path
 -- segments.
 remainingPath :: Route [Text]
-remainingPath = liftF $ RemainingPath id
+remainingPath = Route go
+  where
+    go p _ = return p
 
 -- Derived
 
@@ -204,30 +242,8 @@ directory' rt fp = route rt $ do path <- remainingPath
 -- | Converts a DumpTruck app into a WAI 'Application', which can be run on any
 -- web server that can serve WAI 'Application's.
 mkDumpTruckApp :: Route a -> Application
-mkDumpTruckApp d req c = go [] p (fromF d)
+mkDumpTruckApp (Route r) req cont = case r (pathInfo req) (requestMethod req) of
+    Right _ -> cont' notFound
+    Left e  -> cont' e
   where
-    p = pathInfo req
-    method = requestMethod req
-    cont = generateResponse req >=> c
-    go b p' (Pure _) = cont notFound
-    go b p' (Free op) = go' b p' op
-    go' back [] (Route t c n) = go back [] n
-    go' back path@(x:xs) (Route t c n) =
-        if x == t
-        then go (x:back) xs c
-        else go back path n
-    go' back [] (RouteEnd c n) = go back [] c
-    go' back path (RouteEnd c n) = go back path n
-    go' back [] (Capture f n) = go back [] n
-    go' back path@(x:xs) (Capture f n) =
-        case f x of
-            Nothing -> go back path n
-            Just r -> go (x:back) xs r
-    go' back path (Terminal m r n) =
-        if m == method
-        then cont r
-        else go back path n
-    go' back path (TerminalAny r) = cont r
-    go' back path (RemainingPath f) = go back path (f path)
-    go' [] path (BackTrack n) = go [] path n -- Should probably fail somehow
-    go' (x:xs) path (BackTrack n) = go xs (x:path) n
+    cont' = generateResponse req >=> cont

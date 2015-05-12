@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                dumptruck
-version:             0.1.1.0
+version:             0.1.2.0
 synopsis:            Micro web framework built on top of WAI
 description:         DumpTruck is a micro web framework built on top of WAI.
                      It features a simple monadic interface for building up
@@ -29,7 +29,6 @@ library
   other-extensions:    OverloadedStrings
   build-depends:       base >=4.7 && <4.8
                      , text >=1.1 && <1.2
-                     , free >=4.7 && <4.8
                      , wai  >=3.0 && <3.1
                      , http-types >=0.8 && <0.9
                      , bytestring >=0.10 && <0.11

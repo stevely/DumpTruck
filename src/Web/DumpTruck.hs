@@ -145,8 +145,8 @@
 -- exist or if parsing fails.
 --
 -- In addition to 'capture', there is 'captureInt' which is 'capture'
--- specialized to 'Int'. This can be useful as the polymorphic 'capture' can
--- cause type errors due to ambiguous types.
+-- specialized to 'Int'. This can be convenient as the polymorphic 'capture' can
+-- cause ambiguous types necessitating explicit type annotations.
 --
 -- @
 -- import qualified Data.ByteString.Lazy as LBS
@@ -175,6 +175,9 @@ module Web.DumpTruck
 , post
 , put
 , delete
+, options
+, patch
+, method
 , matchAny
 , remainingPath
 , directory
@@ -196,6 +199,8 @@ module Web.DumpTruck
 , redirect
 , redirectPermanent
 , methodNotAllowed
+, withFormData
+, withJson
 )
 where
 

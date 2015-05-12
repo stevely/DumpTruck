@@ -3,6 +3,7 @@
  - By Steven Smith
  -}
 
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 
 -- | 'Captureable' is a type class for types that can be parsed from 'Text'.
@@ -15,6 +16,7 @@
 -- @URI@ path segment, so not all possible characters will be available.
 module Web.DumpTruck.Capture where
 
+import Control.Applicative
 import Data.Text (Text)
 import Data.Text.Encoding
 import Data.Attoparsec.Text
@@ -61,6 +63,9 @@ instance Captureable Int where
 
 instance Captureable Double where
     captureParser = double
+
+instance Captureable Bool where
+    captureParser = string "true" *> pure True <|> string "false" *> pure False
 
 instance Captureable Char where
     captureParser = anyChar
