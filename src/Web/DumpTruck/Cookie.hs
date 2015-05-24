@@ -71,7 +71,7 @@ data Cookie = Cookie {
 
 -- | Simple datatype for the two methods to handle cookie expiration. 'MaxAge'
 -- is in seconds.
-data CookieExpiration = Expires UTCTime
+data CookieExpiration = Expires GmtTime
                       | MaxAge Int
 
 -------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ setCookiePath p c = c { _cookiePath = Just p }
 -- | Builder function that sets the 'Cookie' to expire at the given time. It's
 -- generally recommended that this be some time in the future. To force a cookie
 -- to expire use 'deleteCookie'.
-setCookieExpires :: UTCTime -> Cookie -> Cookie
+setCookieExpires :: GmtTime -> Cookie -> Cookie
 setCookieExpires t c = c { _cookieExpires = Just (Expires t) }
 
 -- | Builder function that sets the 'Cookie' to expire the given number of
@@ -146,7 +146,7 @@ deleteCookie c = c { _cookieExpires = Just (Expires t) }
     -- For obvious reasons, we use the North American release date for the
     -- SNES game Final Fantasy VI (titled Final Fantasy III for its North
     -- American release)
-    t = UTCTime (fromGregorian 1994 10 20) (secondsToDiffTime 0)
+    t = GmtTime (UTCTime (fromGregorian 1994 10 20) (secondsToDiffTime 0))
 
 -------------------------------------------------------------------------------
 -- Building Cookies
@@ -166,7 +166,7 @@ encodeCookie c = ("Set-Cookie", B.concat $ concat [v, d, p, e, s, h])
              Just p' -> ["; Path=", p']
     e = case _cookieExpires c of
              Nothing -> []
-             Just (Expires e') -> ["; Expires=", utcToGmtString e']
+             Just (Expires e') -> ["; Expires=", gmtToByteString e']
              Just (MaxAge e') -> ["; Max-Age=", fromString (show e')]
     s = case _cookieSecure c of
              False -> []

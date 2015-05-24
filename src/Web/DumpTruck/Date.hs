@@ -5,15 +5,16 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Contains functions for converting between UTCTime and the HTTP date
--- formats. Note that HTTP timestamps are in GMT while UTCTime uses UTC. These
--- formats are mostly interchangeable, but they are not identical. Noteably,
--- GMT doesn't take into account leap seconds while UTC does. This code tries
--- to do the sensible thing, and for just comparing timestamps there shouldn't
--- be any unfortunate surprises.
+-- | Contains functions for handling the GMT date/time formats that HTTP uses.
+-- Note that while the 'GmtTime' type is just a wrapper around 'UTCTime', GMT
+-- time and UTC time have some subtle differences. This code attempts to do the
+-- sensible thing for handling e.g. leap seconds, but for just comparing
+-- timestamps there shouldn't be any unfortunate surprises.
 module Web.DumpTruck.Date
-( utcToGmtString
-, parseGmtTimeToUTCTime
+( GmtTime(..)
+, gmtToByteString
+, parseGmtTime
+, gmtTimeParser
 )
 where
 
@@ -29,12 +30,17 @@ import Data.Time.Clock
 
 import qualified Data.ByteString as B
 
+-- | GMT time, represented as a wrapper over 'UTCTime'. There are some subtle
+-- differences between the two, but they are roughly the same.
+newtype GmtTime = GmtTime { toUtcTime :: UTCTime }
+    deriving (Eq, Ord)
+
 -- From UTCTime to GMT
 
--- | Converts a 'UTCTime' timestamp into a strict 'ByteString' containing the
--- RFC 1123 representation of the timestamp converted to GMT.
-utcToGmtString :: UTCTime -> ByteString
-utcToGmtString t =
+-- | Converts a 'GmtTime' timestamp into a strict 'ByteString' containing the
+-- RFC 1123 representation of the timestamp.
+gmtToByteString :: GmtTime -> ByteString
+gmtToByteString (GmtTime t) =
     B.concat [ weekDayName wd
              , ", "
              , fromString (to2d d)
@@ -96,11 +102,11 @@ weekDayName 7 = "Sun"
 -- failure. The date formats accepted are those defined by RFC 1123, RFC 850,
 -- and ANSI C's @asctime()@ format. (All these formats are required for HTTP/1.1
 -- compliance. See RFC 2616, sec. 3.3.1)
-parseGmtTimeToUTCTime :: ByteString -> Maybe UTCTime
-parseGmtTimeToUTCTime = go . parseOnly httpDate
+parseGmtTime :: ByteString -> Maybe GmtTime
+parseGmtTime = go . parseOnly httpDate
   where
     go (Left _) = Nothing
-    go (Right d) = httpDateToUTCTime d
+    go (Right d) = fmap GmtTime (httpDateToUTCTime d)
 
 -- Ignoring day-of-week, because don't care
 data HttpDate = HttpDate {
@@ -112,6 +118,11 @@ data HttpDate = HttpDate {
     httpDateSecond :: Int
 }
     deriving (Show, Read)
+
+-- | A parser for GMT time. This parser accepts all the formats required for
+-- HTTP/1.1 compliance.
+gmtTimeParser :: Parser GmtTime
+gmtTimeParser = fmap httpDateToUTCTime httpDate >>= maybe empty (pure . GmtTime)
 
 httpDateToUTCTime :: HttpDate -> Maybe UTCTime
 httpDateToUTCTime (HttpDate y mon d h min s) =

@@ -55,15 +55,13 @@ import Network.Wai
 import Network.HTTP.Types
 
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-import qualified Network.HTTP.Types as H
 
 -- | The 'Route' web routing tree data type. A DumpTruck web application is a
 -- 'Route' routing tree with some number of 'EndPoint' leaves that produce a
 -- 'Response'. 'Route' is a 'Monad', and @do@ notation is the prefered means of
 -- building up 'Route' values.
 newtype Route a = Route {
-    runRoute :: [Text] -> Method -> Either (EndPoint IO RespBuilder) a
+    runRoute :: [Text] -> Method -> Either (EndPoint IO ()) a
 }
 
 instance Functor Route where
@@ -154,43 +152,43 @@ captureInt = capture
 -- | Matches if the request method is @GET@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-get :: EndPoint IO RespBuilder -> Route ()
+get :: EndPoint IO () -> Route ()
 get = method methodGet
 
 -- | Matches if the request method is @POST@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-post :: EndPoint IO RespBuilder -> Route ()
+post :: EndPoint IO () -> Route ()
 post = method methodPost
 
 -- | Matches if the request method is @PUT@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-put :: EndPoint IO RespBuilder -> Route ()
+put :: EndPoint IO () -> Route ()
 put = method methodPut
 
 -- | Matches if the request method is @DELETE@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-delete :: EndPoint IO RespBuilder -> Route ()
+delete :: EndPoint IO () -> Route ()
 delete = method methodDelete
 
 -- | Matches if the request method is @OPTIONS@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-options :: EndPoint IO RespBuilder -> Route ()
+options :: EndPoint IO () -> Route ()
 options = method methodOptions
 
 -- | Matches if the request method is @PATCH@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-patch :: EndPoint IO RespBuilder -> Route ()
+patch :: EndPoint IO () -> Route ()
 patch = method methodPatch
 
 -- | Matches if the request method is the one provided. This is a terminal node.
 -- If matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-method :: Method -> EndPoint IO RespBuilder -> Route ()
+method :: Method -> EndPoint IO () -> Route ()
 method m e = Route go
   where
     go _ m'
@@ -200,7 +198,7 @@ method m e = Route go
 -- | Matching will always succeed. This is a terminal node. The 'EndPoint'
 -- will always be executed to generate the final 'Response' and matching will
 -- end.
-matchAny :: EndPoint IO RespBuilder -> Route ()
+matchAny :: EndPoint IO () -> Route ()
 matchAny e = Route go
   where
     go _ _ = Left e

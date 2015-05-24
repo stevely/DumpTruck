@@ -186,8 +186,6 @@ module Web.DumpTruck
 -- Web.DumpTruck.EndPoint
 , EndPoint
 , addHeader
-, setStatus
-, RespBuilder
 , generateResponse
 , file
 , cacheOnMod
@@ -201,6 +199,7 @@ module Web.DumpTruck
 , methodNotAllowed
 , withFormData
 , withJson
+, withRequestData
 )
 where
 

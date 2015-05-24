@@ -16,6 +16,8 @@
 -- @URI@ path segment, so not all possible characters will be available.
 module Web.DumpTruck.Capture where
 
+import Web.DumpTruck.Date
+
 import Control.Applicative
 import Data.Text (Text)
 import Data.Text.Encoding
@@ -78,3 +80,7 @@ instance Captureable [Char] where
 -- Note that stacking lists [[a]] is unlikely to do anything useful
 instance Captureable a => Captureable [a] where
     captureParser = captureParser `sepBy1` (char ',')
+
+instance Captureable GmtTime where
+    captureParser = undefined -- TODO :(
+    performCapture = parseGmtTime . encodeUtf8
