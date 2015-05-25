@@ -4,6 +4,7 @@
  -}
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | 'Route' is a data type defining the hierarchy of web routes for a web
 -- application.
@@ -40,6 +41,7 @@ module Web.DumpTruck.Route
 , directory
 , directory'
 , mkDumpTruckApp
+, mkDumpTruckApp'
 )
 where
 
@@ -60,16 +62,16 @@ import qualified Data.Text as T
 -- 'Route' routing tree with some number of 'EndPoint' leaves that produce a
 -- 'Response'. 'Route' is a 'Monad', and @do@ notation is the prefered means of
 -- building up 'Route' values.
-newtype Route a = Route {
-    runRoute :: [Text] -> Method -> Either (EndPoint IO ()) a
+newtype Route s a = Route {
+    runRoute :: [Text] -> Method -> Either (EndPoint s IO ()) a
 }
 
-instance Functor Route where
+instance Functor (Route s) where
     fmap f (Route r) = Route go
       where
         go ts m = fmap f (r ts m)
 
-instance Applicative Route where
+instance Applicative (Route s) where
     pure x = Route go
       where
         go _ _ = Right x
@@ -79,7 +81,7 @@ instance Applicative Route where
                       r' = r ts m
                    in f' <*> r'
 
-instance Monad Route where
+instance Monad (Route s) where
     return = pure
     (Route f) >>= k = Route go
       where
@@ -97,8 +99,8 @@ instance Monad Route where
 route :: Text -- ^ The path segment to match on. Multiple path segments can be
               -- specified at once by separating them with "@\/@" characters.
               -- Leading and trailing "@\/@" characters are ignored.
-      -> Route () -- ^ The route to take if matching succeeds.
-      -> Route ()
+      -> Route s () -- ^ The route to take if matching succeeds.
+      -> Route s ()
 route t (Route r) = Route go
   where
     go [] _ = return ()
@@ -108,8 +110,8 @@ route t (Route r) = Route go
 
 -- | Will only match if there are no more path segments to consider. Otherwise,
 -- matching will fall through to the next 'Route'.
-routeEnd :: Route () -- ^ The route to take if matching succeeds.
-         -> Route ()
+routeEnd :: Route s () -- ^ The route to take if matching succeeds.
+         -> Route s ()
 routeEnd (Route r) = Route go
   where
     go [] m = r [] m
@@ -124,11 +126,12 @@ routeEnd (Route r) = Route go
 -- it may be necessary to include a type annotation in the given function to
 -- force its argument type to be monomorphic.
 capture :: Captureable a
-        => (a -> Route ()) -- ^ The function called when there is a path segment
-                           -- and it can be parsed into the appropriate type.
-                           -- The parsed value will be fed into this function to
-                           -- produce the next 'Route' to take.
-        -> Route ()
+        => (a -> Route s ()) -- ^ The function called when there is a path
+                             -- segment and it can be parsed into the
+                             -- appropriate type. The parsed value will be fed
+                             -- into this function to produce the next 'Route'
+                             -- to take.
+        -> Route s ()
 capture f = Route go
   where
     go [] _ = return ()
@@ -142,53 +145,53 @@ capture f = Route go
 -- through to the next 'Route'.
 --
 -- Note: This function is just a monomorphic version of 'capture'.
-captureInt :: (Int -> Route ()) -- ^ The function called when there is a path
-                                -- segment and it can be parsed into an 'Int'.
-                                -- The parsed value will be fed into this
-                                -- function to produce the route to take.
-           -> Route ()
+captureInt :: (Int -> Route s ()) -- ^ The function called when there is a path
+                                  -- segment and it can be parsed into an 'Int'.
+                                  -- The parsed value will be fed into this
+                                  -- function to produce the route to take.
+           -> Route s ()
 captureInt = capture
 
 -- | Matches if the request method is @GET@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-get :: EndPoint IO () -> Route ()
+get :: EndPoint s IO () -> Route s ()
 get = method methodGet
 
 -- | Matches if the request method is @POST@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-post :: EndPoint IO () -> Route ()
+post :: EndPoint s IO () -> Route s ()
 post = method methodPost
 
 -- | Matches if the request method is @PUT@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-put :: EndPoint IO () -> Route ()
+put :: EndPoint s IO () -> Route s ()
 put = method methodPut
 
 -- | Matches if the request method is @DELETE@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-delete :: EndPoint IO () -> Route ()
+delete :: EndPoint s IO () -> Route s ()
 delete = method methodDelete
 
 -- | Matches if the request method is @OPTIONS@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-options :: EndPoint IO () -> Route ()
+options :: EndPoint s IO () -> Route s ()
 options = method methodOptions
 
 -- | Matches if the request method is @PATCH@. This is a terminal node. If
 -- matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-patch :: EndPoint IO () -> Route ()
+patch :: EndPoint s IO () -> Route s ()
 patch = method methodPatch
 
 -- | Matches if the request method is the one provided. This is a terminal node.
 -- If matching succeeds, the 'EndPoint' will be executed to generate the final
 -- 'Response' and matching will end.
-method :: Method -> EndPoint IO () -> Route ()
+method :: Method -> EndPoint s IO () -> Route s ()
 method m e = Route go
   where
     go _ m'
@@ -198,14 +201,14 @@ method m e = Route go
 -- | Matching will always succeed. This is a terminal node. The 'EndPoint'
 -- will always be executed to generate the final 'Response' and matching will
 -- end.
-matchAny :: EndPoint IO () -> Route ()
+matchAny :: EndPoint s IO () -> Route s ()
 matchAny e = Route go
   where
     go _ _ = Left e
 
 -- | Produces the remaining path to match against as a list of 'Text' path
 -- segments.
-remainingPath :: Route [Text]
+remainingPath :: Route s [Text]
 remainingPath = Route go
   where
     go p _ = return p
@@ -220,14 +223,14 @@ remainingPath = Route go
 --
 -- This will also filter out any path segments that are "@..@" because this can
 -- be a potential security hole and is essentially never desired behavior.
-directory :: Text -> Route ()
+directory :: Text -> Route s ()
 directory fp = directory' fp fp
 
 -- | This is a variation of 'directory' in which the route to match and the base
 -- path of the file to serve can be different.
 directory' :: Text -- ^ The route to match
            -> Text -- ^ The base path for the path to serve
-           -> Route ()
+           -> Route s ()
 directory' rt fp = route rt $ do path <- remainingPath
                                  get $ go path
   where
@@ -239,9 +242,16 @@ directory' rt fp = route rt $ do path <- remainingPath
 
 -- | Converts a DumpTruck app into a WAI 'Application', which can be run on any
 -- web server that can serve WAI 'Application's.
-mkDumpTruckApp :: Route a -> Application
-mkDumpTruckApp (Route r) req cont = case r (pathInfo req) (requestMethod req) of
-    Right _ -> cont' notFound
-    Left e  -> cont' e
+mkDumpTruckApp :: Route s a -> s -> Application
+mkDumpTruckApp (Route r) s req cont =
+    case r (pathInfo req) (requestMethod req) of
+        Right _ -> cont' notFound
+        Left e  -> cont' e
   where
-    cont' = generateResponse req >=> cont
+    cont' = generateResponse req s >=> cont
+
+-- | Converts a DumpTruck app into a WAI 'Application', which can be run on any
+-- web server that can serve WAI 'Application's. This variant can be used in
+-- instances where the environment value is not used.
+mkDumpTruckApp' :: (forall s. Route s a) -> Application
+mkDumpTruckApp' r = mkDumpTruckApp r undefined

@@ -14,7 +14,9 @@
 -- 'Response' headers and the HTTP 'Status'.
 module Web.DumpTruck.EndPoint
 ( EndPoint
+, getState
 , addHeader
+, buildResponse
 , generateResponse
 , file
 , cacheOnMod
@@ -58,71 +60,79 @@ import qualified Data.Sequence as S
 -- 'DumpTruck' route. This is a variant of the writer monad transformer, and is
 -- used to set HTTP headers, set the HTTP status, and eventually produce the
 -- final 'Response'.
-newtype EndPoint m a = EndPoint {
-    runEndPoint :: Request -> Seq Header -> m (Either Response (a, Seq Header))
+newtype EndPoint s m a = EndPoint {
+    runEndPoint :: Request -> Seq Header -> s
+                -> m (Either Response (a, Seq Header))
 }
 
-instance Functor f => Functor (EndPoint f) where
-    fmap f (EndPoint m) = EndPoint (\r hs -> (fmap . fmap) go (m r hs))
+instance Functor f => Functor (EndPoint s f) where
+    fmap f (EndPoint m) = EndPoint (\r hs s -> (fmap . fmap) go (m r hs s))
       where
         go (a,hs) = (f a, hs)
 
 -- TODO: Figure out why this Functor constraint is necessary
-instance (Functor m, Monad m) => Applicative (EndPoint m) where
-    pure a = EndPoint (\_ hs -> return (Right (a, hs)))
+instance (Functor m, Monad m) => Applicative (EndPoint s m) where
+    pure a = EndPoint (\_ hs _ -> return (Right (a, hs)))
     (EndPoint m1) <*> (EndPoint m2) = EndPoint go
       where
-        go r hs = do
-            eith <- m1 r hs
+        go r hs s = do
+            eith <- m1 r hs s
             case eith of
                 Left resp -> return (Left resp)
                 Right (f, hs') -> do
-                    eith' <- m2 r hs'
+                    eith' <- m2 r hs' s
                     case eith' of
                         Left resp' -> return (Left resp')
                         Right (a, hs'') -> return (Right (f a, hs''))
 
-instance Monad m => Monad (EndPoint m) where
-    return a = EndPoint (\_ hs -> return (Right (a, hs)))
-    (EndPoint m) >>= k = EndPoint $ \r hs -> do
-        eith <- m r hs
+instance Monad m => Monad (EndPoint s m) where
+    return a = EndPoint (\_ hs _ -> return (Right (a, hs)))
+    (EndPoint m) >>= k = EndPoint $ \r hs s -> do
+        eith <- m r hs s
         case eith of
             Left resp -> return (Left resp)
             Right (a, hs') -> do
-                eith' <- runEndPoint (k a) r hs'
+                eith' <- runEndPoint (k a) r hs' s
                 case eith' of
                     Left resp -> return (Left resp)
                     Right (b, hs'') -> return (Right (b, hs''))
 
-instance MonadTrans EndPoint where
-    lift m = EndPoint $ \r hs -> do
+instance MonadTrans (EndPoint s) where
+    lift m = EndPoint $ \r hs s -> do
         a <- m
-        return (Right (a, S.empty))
+        return (Right (a, hs))
 
-instance MonadIO m => MonadIO (EndPoint m) where
+instance MonadIO m => MonadIO (EndPoint s m) where
     liftIO = lift . liftIO
 
-getRequest :: Monad m => EndPoint m Request
-getRequest = EndPoint (\r hs -> return (Right (r, hs)))
+getRequest :: Monad m => EndPoint s m Request
+getRequest = EndPoint (\r hs s -> return (Right (r, hs)))
+
+-- | Retrieves the app-wide environment value.
+getState :: Monad m => EndPoint s m s
+getState = EndPoint (\_ hs s -> return (Right (s, hs)))
 
 -- | Adds the given HTTP 'Header' to the final 'Response'.
-addHeader :: Monad m => Header -> EndPoint m ()
-addHeader h = EndPoint (\r hs -> return (Right ((), hs |> h)))
+addHeader :: Monad m => Header -> EndPoint s m ()
+addHeader h = EndPoint (\_ hs _ -> return (Right ((), hs |> h)))
 
-buildResponse :: Monad m => ([Header] -> Response) -> EndPoint m a
-buildResponse f = EndPoint (\r hs -> return (Left (f (toList hs))))
+-- | Given a function that takes a list of 'Header's and produces a 'Response',
+-- produces an 'EndPoint' that feeds the current set of 'Header's to produce the
+-- 'Response' for this request.
+buildResponse :: Monad m => ([Header] -> Response) -> EndPoint s m a
+buildResponse f = EndPoint (\r hs _ -> return (Left (f (toList hs))))
 
 -- | Generates the final 'Response' given the 'Request' and an 'EndPoint'. End
 -- users should never have to use this function.
-generateResponse :: Functor m => Request -> EndPoint m a -> m Response
-generateResponse req m = fmap go (runEndPoint m req S.empty)
+generateResponse :: Functor m => Request -> s -> EndPoint s m a -> m Response
+generateResponse req s m = fmap go (runEndPoint m req S.empty s)
   where
     go (Left resp) = resp
     go (Right _) = responseLBS internalServerError500 [] "Internal Server Error"
 
 -- | Produces an 'EndPoint' to serve a file at the given 'FilePath'. Will
 -- automatically handle caching based on the file's modification timestamp.
-file :: FilePath -> EndPoint IO a
+file :: FilePath -> EndPoint s IO a
 file fp = do
     exists <- liftIO $ doesFileExist fp
     if exists then do
@@ -139,7 +149,7 @@ file fp = do
 -- timestamp. This means if a client sends an @If-Modified-Since@ header with a
 -- timestamp that is not older than the given timestamp the server will send a
 -- @304 Not Modified@ 'Response' instead of the normal 'Response'.
-cacheOnMod :: GmtTime -> EndPoint IO a -> EndPoint IO a
+cacheOnMod :: GmtTime -> EndPoint s IO a -> EndPoint s IO a
 cacheOnMod t r = do
     addHeader ("Last-Modified", gmtToByteString t)
     addHeader ("Cache-Control", "max-age=3600")
@@ -158,7 +168,7 @@ cacheOnMod t r = do
 -- This means if a client sends an @If-None-Match@ header with an ETag that is
 -- equivalent to the given ETag the server will send a @304 Not Modified@
 -- 'Response' instead of the normal 'Response'.
-cacheOnEtag :: B.ByteString -> EndPoint IO a -> EndPoint IO a
+cacheOnEtag :: B.ByteString -> EndPoint s IO a -> EndPoint s IO a
 cacheOnEtag t r = do
     addHeader ("ETag", t)
     addHeader ("Cache-Control", "max-age=3600")
@@ -175,30 +185,30 @@ cacheOnEtag t r = do
 
 -- | Produces an 'EndPoint' that simply has the given lazy 'ByteString' as the
 -- 'Response' body.
-raw :: Monad m => ByteString -> EndPoint m a
+raw :: Monad m => ByteString -> EndPoint s m a
 raw bs = buildResponse (\hs -> responseLBS ok200 hs bs)
 
 -- | Produces an 'EndPoint' that simply has the given lazy 'ByteString' as the
 -- 'Response' body while setting the @Content-Type@ to @application/json@.
-rawJson :: Monad m => ByteString -> EndPoint m a
+rawJson :: Monad m => ByteString -> EndPoint s m a
 rawJson bs = do
     addHeader (hContentType, "application/json")
     buildResponse (\hs -> responseLBS ok200 hs bs)
 
 -- | Produces an 'EndPoint' that has the given value encoded as JSON as the
 -- 'Response' body while setting the @Content-Type@ to @application/json@.
-json :: (ToJSON a, Monad m) => a -> EndPoint m b
+json :: (ToJSON a, Monad m) => a -> EndPoint s m b
 json a = do
     addHeader (hContentType, "application/json")
     buildResponse (\hs -> responseLBS ok200 hs (encode a))
 
 -- | An 'EndPoint' that simply returns a @404 Not Found@ 'Response'.
-notFound :: Monad m => EndPoint m a
+notFound :: Monad m => EndPoint s m a
 notFound = buildResponse (\hs -> responseLBS notFound404 hs "Not found")
 
 -- | An 'EndPoint' that returns a @307 Temporary Redirect@ 'Response' with the
 -- given URL as a strict 'B.ByteString' as the redirect destination.
-redirect :: Monad m => B.ByteString -> EndPoint m a
+redirect :: Monad m => B.ByteString -> EndPoint s m a
 redirect bs = do
     addHeader (hLocation, bs)
     buildResponse
@@ -206,7 +216,7 @@ redirect bs = do
 
 -- | An 'EndPoint' that returns a @301 Moved Permanently@ 'Response' with the
 -- given URL as a strict 'B.ByteString' as the redirect destination.
-redirectPermanent :: Monad m => B.ByteString -> EndPoint m a
+redirectPermanent :: Monad m => B.ByteString -> EndPoint s m a
 redirectPermanent bs = do
     addHeader (hLocation, bs)
     buildResponse
@@ -223,15 +233,15 @@ redirectPermanent bs = do
 --     delete doDelete
 --     matchAny methodNotAllowed
 -- @
-methodNotAllowed :: Monad m => EndPoint m a
+methodNotAllowed :: Monad m => EndPoint s m a
 methodNotAllowed = buildResponse (\hs -> responseLBS methodNotAllowed405 hs
     "Method not allowed")
 
 -- | Will attempt to parse the request body as URL-encoded form data and- if
 -- successful- will then feed that form data to the given function to produce an
 -- 'EndPoint'. If parsing fails, it will return @400 Bad Request@.
-withFormData :: ([(B.ByteString, B.ByteString)] -> EndPoint IO a)
-             -> EndPoint IO a
+withFormData :: ([(B.ByteString, B.ByteString)] -> EndPoint s IO a)
+             -> EndPoint s IO a
 withFormData f = do
     req <- getRequest
     maybeForm <- liftIO (parseFormData req)
@@ -245,7 +255,7 @@ withFormData f = do
 -- then feed that JSON data converted into the appropriate type to the given
 -- function to produce an 'EndPoint'. If parsing fails, it will return @400 Bad
 -- Request@.
-withJson :: FromJSON a => (a -> EndPoint IO b) -> EndPoint IO b
+withJson :: FromJSON a => (a -> EndPoint s IO b) -> EndPoint s IO b
 withJson f = do
     req <- getRequest
     maybeA <- liftIO (parseFormJson req)
@@ -263,7 +273,7 @@ withJson f = do
 -- If running the 'RequestData' fails then it will return @400 Bad Request@.
 -- This behavior can be bypassed by wrapping the 'RequestData' with 'optional'
 -- from 'Control.Applicative'.
-withRequestData :: RequestData a -> EndPoint IO a
+withRequestData :: RequestData a -> EndPoint s IO a
 withRequestData rd = do
     req <- getRequest
     maybeA <- liftIO (runRequestData req rd)

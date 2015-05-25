@@ -25,7 +25,7 @@
 -- @OverloadedStrings@ is enabled):
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = matchAny (raw "Hello!")
 -- @
 --
@@ -37,7 +37,7 @@
 -- more complicated app:
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do get (raw "HTTP GET")
 --            matchAny (raw "Not HTTP GET")
 -- @
@@ -49,7 +49,7 @@
 -- constructors exist:
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do get (raw "HTTP GET")
 --            post (raw "HTTP POST")
 --            put (raw "HTTP PUT")
@@ -65,7 +65,7 @@
 -- specific path segment:
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do
 --     route "foo" $ do
 --         matchAny (raw "Matched foo")
@@ -77,7 +77,7 @@
 -- @URI@ "\/foo\/bar". To cap the matching @URI@ use 'routeEnd':
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do
 --     route "foo" $ do
 --         routeEnd $ do
@@ -91,7 +91,7 @@
 -- @URI@ paths.
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do
 --     route "foo" $ do
 --         route "bar" $ do
@@ -111,7 +111,7 @@
 -- segments:
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do
 --     route "foo" $ do
 --         route "bar" $ do
@@ -125,7 +125,7 @@
 -- segments delineated by "\/":
 --
 -- @
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do
 --     route "foo\/bar" . routeEnd $ matchAny (raw "Matched exactly \/foo\/bar")
 --     route "foo\/bar\/foobar" $ matchAny (raw "Matched \/foo\/bar\/foobar")
@@ -151,7 +151,7 @@
 -- @
 -- import qualified Data.ByteString.Lazy as LBS
 --
--- myApp :: Route ()
+-- myApp :: Route s ()
 -- myApp = do
 --     route "text" $ capture $ \t ->
 --         matchAny (raw $ "Captured: " LBS.++ t)
@@ -183,9 +183,12 @@ module Web.DumpTruck
 , directory
 , directory'
 , mkDumpTruckApp
+, mkDumpTruckApp'
 -- Web.DumpTruck.EndPoint
 , EndPoint
+, getState
 , addHeader
+, buildResponse
 , generateResponse
 , file
 , cacheOnMod
