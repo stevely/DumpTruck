@@ -36,6 +36,7 @@ import Web.DumpTruck.Cookie
 import Web.DumpTruck.Form
 
 import Control.Applicative
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Data.Aeson (FromJSON, fromJSON, json')
@@ -124,6 +125,11 @@ instance Monad RequestData where
             QueryFail -> QueryFail
             QueryDone a -> unRequestData (k a) m1 m2 m3
             Incomplete f -> Incomplete (\b -> f b >>= k)
+    fail _ = empty
+
+instance MonadPlus RequestData where
+    mplus = (<|>)
+    mzero = empty
 
 -- | Transforms a 'Parser' into a 'RequestData' action. This action will feed
 -- chunks from the request body into parser, either succeeding or failing
@@ -146,7 +152,8 @@ runRequestData req = go
   where
     m1 = M.fromList (queryString req)
     m2 = M.fromList (getCookies req)
-    m3 = M.fromList (requestHeaders req)
+    m3 = M.fromListWith comb (requestHeaders req)
+    comb h1 h2 = B.concat [h1, "; ", h2]
     go (RequestData r) = case r m1 m2 m3 of
         QueryFail -> return Nothing
         QueryDone a -> return (Just a)
@@ -159,6 +166,11 @@ runRequestData req = go
 getReqBodyAsForm :: RequestData [(ByteString, ByteString)]
 getReqBodyAsForm = parserToReqData formParser
 
+-- | Attempts to retrieve the request body as HTML form data, producing a map
+-- mapping form names to values.
+getReqBodyAsFormMap :: RequestData (Map ByteString ByteString)
+getReqBodyAsFormMap = fmap M.fromList getReqBodyAsForm
+
 -- | Attempts to retrieve the request body as JSON data, then attempts to
 -- transform that JSON data into a value of the appropriate type.
 getReqBodyAsJson :: FromJSON a => RequestData a
@@ -166,6 +178,10 @@ getReqBodyAsJson = parserToReqData json' >>= go . fromJSON
   where
     go (A.Error _) = empty
     go (A.Success a) = return a
+
+-- | Retrieves the request body as raw text.
+getReqBodyRaw :: RequestData ByteString
+getReqBodyRaw = parserToReqData takeByteString
 
 -- | Attempts to retrieve the value corresponding to the given key for the
 -- given map.

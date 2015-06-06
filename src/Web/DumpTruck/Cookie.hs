@@ -90,6 +90,22 @@ data CookieExpiration = Expires GmtTime
 mkCookie :: (ByteString, ByteString) -> (Cookie -> Cookie) -> Cookie
 mkCookie kv f = f $ Cookie kv Nothing Nothing Nothing False False
 
+-- | Produces a 'Cookie' given a key name and a builder function that is marked
+-- as needing to be deleted by the client. The server still needs to encode and
+-- send this cookie to the client in order for the deletion to actually happen.
+--
+-- The cookie key, domain, and path must all be equal to the original 'Cookie'
+-- sent to the client for the 'Cookie' deletion to happen successfully, so
+-- ensure that the domain and path are present if they were originally.
+deleteCookie :: ByteString -> (Cookie -> Cookie) -> Cookie
+deleteCookie b f = mkCookie (b, "") (f . setCookieExpires t)
+  where
+    -- We need to set the expiration time to some arbitrary point in the past.
+    -- For obvious reasons, we use the North American release date for the
+    -- SNES game Final Fantasy VI (titled Final Fantasy III for its North
+    -- American release)
+    t = GmtTime (UTCTime (fromGregorian 1994 10 20) (secondsToDiffTime 0))
+
 -- | Builder function that sets the 'Cookie' domain. This controls what domains
 -- the client will send this cookie to. For example, if the domain is set to
 -- \"example.com\" the client will send the cookie to \"www.example.com\" and to
@@ -132,21 +148,6 @@ setCookieSecure c = c { _cookieSecure = True }
 -- 'mkCookie' are not HTTP-only by default.
 setCookieHttpOnly :: Cookie -> Cookie
 setCookieHttpOnly c = c { _cookieHttpOnly = True }
-
--- | Builder function that marks the 'Cookie' as needing to be deleted by the
--- client. The server still needs to encode and send this cookie to the client
--- in order for the deletion to actually happen. The requirements for cookie
--- deletion to happen are that the cookie key, domain, and path are equal to
--- the original 'Cookie' sent to the client, so ensure that the domain and path
--- are present if they were originally.
-deleteCookie :: Cookie -> Cookie
-deleteCookie c = c { _cookieExpires = Just (Expires t) }
-  where
-    -- We need to set the expiration time to some arbitrary point in the past.
-    -- For obvious reasons, we use the North American release date for the
-    -- SNES game Final Fantasy VI (titled Final Fantasy III for its North
-    -- American release)
-    t = GmtTime (UTCTime (fromGregorian 1994 10 20) (secondsToDiffTime 0))
 
 -------------------------------------------------------------------------------
 -- Building Cookies

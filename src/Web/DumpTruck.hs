@@ -186,6 +186,7 @@ module Web.DumpTruck
 , mkDumpTruckApp'
 -- Web.DumpTruck.EndPoint
 , EndPoint
+, getRequest
 , getState
 , addHeader
 , buildResponse
@@ -203,6 +204,7 @@ module Web.DumpTruck
 , withFormData
 , withJson
 , withRequestData
+, addCookie
 )
 where
 

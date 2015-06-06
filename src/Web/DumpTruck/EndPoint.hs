@@ -9,11 +9,12 @@
 -- 'Response' in some 'Monad' (almost always 'IO').
 --
 -- When a 'DumpTruck' web route is matched to a terminal node, an 'EndPoint'
--- is executed to generate the final 'Response'. 'EndPoint' itself is just a
--- custom 'WriterT' monad transformer to facilitate stateful setting of
--- 'Response' headers and the HTTP 'Status'.
+-- is executed to generate the final 'Response'. Keep in mind that execution
+-- will end as soon as a 'Response' is generated, so 'EndPoint' actions will not
+-- be executed after an action that produces a 'Response'.
 module Web.DumpTruck.EndPoint
 ( EndPoint
+, getRequest
 , getState
 , addHeader
 , buildResponse
@@ -31,9 +32,11 @@ module Web.DumpTruck.EndPoint
 , withFormData
 , withJson
 , withRequestData
+, addCookie
 )
 where
 
+import Web.DumpTruck.Cookie
 import Web.DumpTruck.Date
 import Web.DumpTruck.Form
 import Web.DumpTruck.RequestData
@@ -47,7 +50,6 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Foldable (toList)
 import Data.List (intersperse)
 import Data.Maybe
-import Data.Sequence (Seq, (|>))
 import Data.Time.Clock (UTCTime)
 import Network.HTTP.Types
 import Network.Wai
@@ -57,12 +59,15 @@ import qualified Data.ByteString as B
 import qualified Data.Sequence as S
 
 -- | An 'EndPoint' is the action to perform after successfully matching a
--- 'DumpTruck' route. This is a variant of the writer monad transformer, and is
--- used to set HTTP headers, set the HTTP status, and eventually produce the
--- final 'Response'.
+-- 'DumpTruck' route. This is used to set HTTP headers, set the HTTP status,
+-- and eventually produce the final 'Response'. Once the final 'Response' is
+-- generated execution of the 'EndPoint' will stop, so actions to be performed
+-- after the 'Response' is generated will be ignored.
 newtype EndPoint s m a = EndPoint {
-    runEndPoint :: Request -> Seq Header -> s
-                -> m (Either Response (a, Seq Header))
+    -- The header list is actually built in reverse order for O(1) appends,
+    -- reversed at the end to get the right order.
+    runEndPoint :: Request -> [Header] -> s
+                -> m (Either Response (a, [Header]))
 }
 
 instance Functor f => Functor (EndPoint s f) where
@@ -98,15 +103,16 @@ instance Monad m => Monad (EndPoint s m) where
                     Right (b, hs'') -> return (Right (b, hs''))
 
 instance MonadTrans (EndPoint s) where
-    lift m = EndPoint $ \r hs s -> do
+    lift m = EndPoint $ \_ hs _ -> do
         a <- m
         return (Right (a, hs))
 
 instance MonadIO m => MonadIO (EndPoint s m) where
     liftIO = lift . liftIO
 
+-- | Retrieves the 'Request' object for this request.
 getRequest :: Monad m => EndPoint s m Request
-getRequest = EndPoint (\r hs s -> return (Right (r, hs)))
+getRequest = EndPoint (\r hs _ -> return (Right (r, hs)))
 
 -- | Retrieves the app-wide environment value.
 getState :: Monad m => EndPoint s m s
@@ -114,18 +120,18 @@ getState = EndPoint (\_ hs s -> return (Right (s, hs)))
 
 -- | Adds the given HTTP 'Header' to the final 'Response'.
 addHeader :: Monad m => Header -> EndPoint s m ()
-addHeader h = EndPoint (\_ hs _ -> return (Right ((), hs |> h)))
+addHeader h = EndPoint (\_ hs _ -> return (Right ((), h:hs)))
 
 -- | Given a function that takes a list of 'Header's and produces a 'Response',
 -- produces an 'EndPoint' that feeds the current set of 'Header's to produce the
 -- 'Response' for this request.
 buildResponse :: Monad m => ([Header] -> Response) -> EndPoint s m a
-buildResponse f = EndPoint (\r hs _ -> return (Left (f (toList hs))))
+buildResponse f = EndPoint (\_ hs _ -> return (Left (f (reverse hs))))
 
 -- | Generates the final 'Response' given the 'Request' and an 'EndPoint'. End
 -- users should never have to use this function.
 generateResponse :: Functor m => Request -> s -> EndPoint s m a -> m Response
-generateResponse req s m = fmap go (runEndPoint m req S.empty s)
+generateResponse req s m = fmap go (runEndPoint m req [] s)
   where
     go (Left resp) = resp
     go (Right _) = responseLBS internalServerError500 [] "Internal Server Error"
@@ -136,8 +142,8 @@ file :: FilePath -> EndPoint s IO a
 file fp = do
     exists <- liftIO $ doesFileExist fp
     if exists then do
-        readable <- liftIO $ fmap readable (getPermissions fp)
-        if readable then do
+        canRead <- liftIO $ fmap readable (getPermissions fp)
+        if canRead then do
             modDate <- liftIO $ getModificationTime fp
             cacheOnMod (GmtTime modDate) (buildResponse resp)
         else notFound
@@ -178,7 +184,7 @@ cacheOnEtag t r = do
     else r
   where
     etag = do
-        e <- getHeader "If-Modified-Since"
+        e <- getHeader "If-None-Match"
         return (e == t)
 
 -- Endpoint smart constructors
@@ -237,34 +243,6 @@ methodNotAllowed :: Monad m => EndPoint s m a
 methodNotAllowed = buildResponse (\hs -> responseLBS methodNotAllowed405 hs
     "Method not allowed")
 
--- | Will attempt to parse the request body as URL-encoded form data and- if
--- successful- will then feed that form data to the given function to produce an
--- 'EndPoint'. If parsing fails, it will return @400 Bad Request@.
-withFormData :: ([(B.ByteString, B.ByteString)] -> EndPoint s IO a)
-             -> EndPoint s IO a
-withFormData f = do
-    req <- getRequest
-    maybeForm <- liftIO (parseFormData req)
-    case maybeForm of
-        Nothing -> buildResponse badRequest
-        Just a  -> f a
-  where
-    badRequest hs = responseLBS badRequest400 hs "Invalid request body"
-
--- | Will attempt to parse the request body as JSON and- if successful- will
--- then feed that JSON data converted into the appropriate type to the given
--- function to produce an 'EndPoint'. If parsing fails, it will return @400 Bad
--- Request@.
-withJson :: FromJSON a => (a -> EndPoint s IO b) -> EndPoint s IO b
-withJson f = do
-    req <- getRequest
-    maybeA <- liftIO (parseFormJson req)
-    case maybeA of
-        Nothing -> buildResponse badRequest
-        Just a  -> f a
-  where
-    badRequest hs = responseLBS badRequest400 hs "Invalid request body"
-
 -- | Runs the given 'RequestData' with the available data from the request.
 -- 'RequestData' actions that reference the request body will consume it,
 -- meaning that subsequent 'withRequestData' calls to 'RequestData' actions that
@@ -282,3 +260,25 @@ withRequestData rd = do
         Just a -> return a
   where
     badRequest hs = responseLBS badRequest400 hs "Bad Request"
+
+-- | Will attempt to parse the request body as URL-encoded form data and- if
+-- successful- will then feed that form data to the given function to produce an
+-- 'EndPoint'. If parsing fails, it will return @400 Bad Request@.
+withFormData :: ([(B.ByteString, B.ByteString)] -> EndPoint s IO a)
+             -> EndPoint s IO a
+withFormData f = withRequestData getReqBodyAsForm >>= f
+
+-- | Will attempt to parse the request body as JSON and- if successful- will
+-- then feed that JSON data converted into the appropriate type to the given
+-- function to produce an 'EndPoint'. If parsing fails, it will return @400 Bad
+-- Request@.
+withJson :: FromJSON a => (a -> EndPoint s IO b) -> EndPoint s IO b
+withJson f = withRequestData getReqBodyAsJson >>= f
+
+-- | Adds the given 'Cookie' to the 'Response'. If the 'Cookie' already exists
+-- on the client then it will be updated to this 'Cookie' value, otherwise the
+-- client will create a new 'Cookie'. If marking a 'Cookie' for deletion it must
+-- still be added to the 'Response' so that the client will be notified that it
+-- should delete this 'Cookie'.
+addCookie :: Monad m => Cookie -> EndPoint s m ()
+addCookie = addHeader . encodeCookie

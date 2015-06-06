@@ -79,6 +79,8 @@ urlencoded = B.concat <$> many1 (escaped <|> plusSpace <|> regular)
                 || (n >= 0x41 && n <= 0x5A)
                 || (n >= 0x61 && n <= 0x7A)
 
+-- | Parses the request body as JSON, then attempts to convert that JSON into
+-- the appropriate type through its 'FromJSON' instance.
 parseFormJson :: FromJSON a => Request -> IO (Maybe a)
 parseFormJson req = go (parse json')
   where
