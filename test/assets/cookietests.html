@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<title>Cookie Tests</title>
+</head>
+<body>
+<h1>Current cookies:</h1>
+<p id="cookies_target"></p>
+<p><a href="/cookie">Update cookie</a></p>
+<p><a href="/cookie/delete">Delete cookie</a></p>
+
+<script type="text/javascript">
+var cookies = document.cookie;
+if( cookies == "" ) {
+    document.getElementById("cookies_target").innerText = "No cookies";
+}
+else {
+    document.getElementById("cookies_target").innerText = cookies;
+}
+</script>
+</body>
+</html>

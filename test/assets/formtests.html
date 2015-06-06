@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<title>Form Tests</title>
+<script type="text/javascript">
+
+function handle_ajax_form() {
+    var textfield = document.getElementById("ajax_textfield").value;
+    var hiddenfield = document.getElementById("ajax_hiddenfield").value;
+    var requestBody = { textfield: textfield, hiddenfield: parseInt(hiddenfield) };
+    var req = new XMLHttpRequest();
+    req.open("post", "/form", true);
+    req.onreadystatechange = function() {
+        if( req.readyState === 4 && req.status === 200 ) {
+            var resp = req.responseText;
+            if( resp !== null ) {
+                document.getElementById("ajax_form_target").innerText = resp;
+            }
+            else {
+                document.getElementById("ajax_form_target").innerText = "Blank response";
+            }
+        }
+    };
+    req.send(JSON.stringify(requestBody));
+    return false;
+}
+
+</script>
+</head>
+<body>
+    <h1>Post form</h1>
+    <p>
+        <form action="/form" method="post">
+            <input type="text" name="textfield"></input>
+            <input type="hidden" name="hiddenfield" value="1"></input>
+            <input type="submit" value="Submit"></input>
+        </form>
+    </p>
+    <hr>
+    <h1> AJAX form</h1>
+    <p>
+        <form onsubmit="return handle_ajax_form()">
+            <input type="text" name="textfield" id="ajax_textfield"></input>
+            <input type="hidden" name="hiddenfield" value="2" id="ajax_hiddenfield"></input>
+            <input type="submit" value="Submit"></input>
+        </form>
+        <p id="ajax_form_target"></p>
+    </p>
+    <hr>
+    <h1>Get form</h1>
+    <p>
+        <form action="/form" method="get">
+            <input type="text" name="textfield"></input>
+            <input type="hidden" name="hiddenfield" value="3"></input>
+            <input type="submit" value="Submit"></input>
+        </form>
+    </p>
+</body>
+</html>
