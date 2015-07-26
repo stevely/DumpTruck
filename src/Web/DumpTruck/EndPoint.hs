@@ -96,11 +96,7 @@ instance Monad m => Monad (EndPoint s m) where
         eith <- m r hs s
         case eith of
             Left resp -> return (Left resp)
-            Right (a, hs') -> do
-                eith' <- runEndPoint (k a) r hs' s
-                case eith' of
-                    Left resp -> return (Left resp)
-                    Right (b, hs'') -> return (Right (b, hs''))
+            Right (a, hs') -> runEndPoint (k a) r hs' s
 
 instance MonadTrans (EndPoint s) where
     lift m = EndPoint $ \_ hs _ -> do
